@@ -10,6 +10,7 @@
 | 文件 | 作者 | 作用 |
 |---|---|---|
 | `run.py` | C | **双击交互式启动器**：按提示输入图片/代码/输出/模式/宽度，生成并验证；所有输入必填 |
+| `run_selfcheck.bat` | C | **双击一键检验**：无需找代码/图片，自动用内置素材跑 6 个案例并显示示例结果（调 `scripts/selfcheck.py`） |
 | `README.md` | C | 英文总入口：环境准备、如何运行、C 在 B/F 基础上做了什么 |
 | `README.zh-CN.md` | C | 中文总入口 |
 | `C_对接说明.md` | C | 给 D/E 的对接契约：v1.3 任务、共享类型、坐标语义、档位、编译器策略 |
@@ -22,6 +23,15 @@
 |---|---|
 | `types.py` | 所有跨模块数据结构：`PixelGrid`(B)、`CodeSkeleton`+`Statement`(C，含 `start_line/start_column/canvas_width/canvas_height` 图案区域几何)、`CanvasPlan`(A+C)、`VerifyReport`(E，C 修了 `shape_ok` bug)、`CompilerInfo`(E)、`ShapeReport`/`DetectionReport`(F) |
 | `__init__.py` | 统一导出上述类型，`from shared import ...` 用 |
+
+## codeart/ — B 的 v2 形状掩码模块（依赖注入来源）
+
+| 文件 | 作用 |
+|---|---|
+| `shapes.py` | `build_mask(ShapeSpec, SizeRequest, FontMetrics) -> Mask`：生成 circle/cat/code 三种布尔掩码；`Mask.allowed[row][col]` 为 True 表示可填；含 `ShapeSpec`/`SizeRequest`/`FontMetrics`/`ShapeError`/`geometry_metrics` |
+| `__init__.py` | 导出 `build_mask`、`Mask`、`ShapeSpec`、`SizeRequest`、`FontMetrics` 等 |
+
+`SizeRequest(32)` 实测尺寸：circle 64×32、cat 64×32、code 178×32（32 = 高度行数）。
 
 ## ascii_art_executable/ — 主代码包
 
@@ -39,11 +49,12 @@
 | `c_widthsafe.py` | 等宽清洗：`*/→*|`、`??→?~`、`\\→/`、`#→+`（行长零变化），定义 `C_SAFE_CHARSET` |
 | `c_seam.py` | 保列接缝：两阶段选行（行号升序防顺序反转）+ `build_seam_row`（语句嵌入、右段零偏移） |
 | `c_doc.py` | 为每条真实语句生成"解释这行作用"的英文注释：`explain`（完整句）、`short_explain`（v2 用的简短短语）、图案块英文标注 |
-| `c_parser.py` | 把真实 C 源码解析成 `CodeSkeleton`；`extract_main_parts` 提取 main 内真实语句 |
+| `c_parser.py` | 把真实 C 源码解析成 `CodeSkeleton`；`extract_main_parts` 提取 main 内真实语句；`validate_c_source` + `SourceInputError` 拒绝非 C/非 ASCII/缺 main 的输入（如 Python） |
 | `c_fill.py` | 块注释填充 + 源码组装，三档位 v0/v1a/v1b，真实语句带英文注释 |
 | `c_backend.py` | `CBackend`：`fill(grid,skeleton,plan)` 主入口、`verify`（编译+运行+保形）、`detect_compiler`（含 Dev-C++ 路径回退）、`make_hello_skeleton` |
 | `c_tokenfill.py` | **v2 与 v1.3 工程化主体**，见下表 |
-| `shaper.py` | 高层入口 `shape_code(code, image, out, *, mode, max_w, grid_builder=None, backend=None)`：代码+图片→功能相同且保形的 C 文件；v2 下先 `repair_outer_silhouette` 再填充 |
+| `mask_adapter.py` | 把 B 的 `codeart.build_mask` 布尔掩码适配成 `PixelGrid`：`mask_to_pixelgrid`、`make_mask_builder`（重试时按比例放大掩码）、`shape_code_for_shape` 一站式入口；不改冻结类型 |
+| `shaper.py` | 高层入口 `shape_code(code, image, out, *, mode, max_w, grid_builder=None, backend=None)`：代码+图片（或形状名）→功能相同且保形的 C 文件；v2 下先 `repair_outer_silhouette` 再填充 |
 | `__init__.py` | 导出 `Backend/CBackend/make_hello_skeleton/shape_code` |
 
 ### c_tokenfill.py 内的关键部件
@@ -63,18 +74,27 @@
 
 | 文件 | 作者 | 作用 |
 |---|---|---|
-| `build_shaped.py` | C | 命令行：任意图片 + 任意 C 代码 → 保形代码；未指定宽度用 `recommend_width_for`，显式 undersized 给 WARNING |
+| `build_shaped.py` | C | 命令行：任意图片（或形状名 circle/cat/CODE）+ 任意 C 代码 → 保形代码；形状名模式第 5 个参数为高度行数，图片模式未指定宽度用 `recommend_width_for`，显式 undersized 给 WARNING |
+| `selfcheck.py` | C | **零输入一键检验**：用内置 demo 素材和形状名跑 6 个案例，编译运行并与原程序比对，打印汇总表和猫形示例，退出码反映是否全过 |
 | `demo_c.py` | C | C 演示：画猫 → fill → F 保形 → gcc 编译运行 |
 | `demo_grid.py` | B | B 演示：打印字符网格 |
 | `demo_bf.py` | F | F 演示：保形 + 检测报告 |
 
-## tests/ — 测试（共 59 个）
+## tests/ — 测试（共 100 个）
 
 | 文件 | 作者 | 作用 |
 |---|---|---|
-| `test_c_backend.py` | C | C 的测试：清洗/接缝/填充/保形/明暗 ramp/recommend_width/依赖注入/distance_field/internal_holes/特征宽度/轮廓闭合/轮廓修复/端到端（无 gcc 自动跳过） |
+| `test_c_backend.py` | C | C 的测试：清洗/接缝/填充/保形/明暗 ramp/recommend_width/依赖注入/distance_field/internal_holes/特征宽度/轮廓闭合/轮廓修复/输入校验/端到端（无 gcc 自动跳过） |
+| `test_mask_injection.py` | C | mask 接入测试：假 `build_mask` 注入、三种尺寸、重试放大、图片路径不变、真实 gcc 端到端 |
+| `test_shapes.py` | B | B 的 `codeart` 形状掩码测试（用 `fixtures/shapes/` 基准 JSON） |
 | `test_grid.py` | B | B 的网格测试 |
 | `test_shapecheck.py` | F | F 的保形与检测测试（含 subtests） |
+
+## docs/ — 模块文档
+
+| 文件 | 作用 |
+|---|---|
+| `modules/shapes.md` / `shapes.zh-CN.md` | B 的 `codeart.shapes` 英文/中文说明 |
 
 ## demo/ — 素材与示例
 

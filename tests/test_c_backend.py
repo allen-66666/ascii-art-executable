@@ -32,6 +32,9 @@ from ascii_art_executable.backends.c_tokenfill import (  # noqa: E402
     repair_outer_silhouette,
 )
 from ascii_art_executable.backends.shaper import shape_code  # noqa: E402
+from ascii_art_executable.backends.c_parser import (  # noqa: E402
+    validate_c_source, SourceInputError,
+)
 from ascii_art_executable.grid import build_grid  # noqa: E402
 from ascii_art_executable.shapecheck import check_shape  # noqa: E402
 from shared.types import Statement  # noqa: E402
@@ -491,6 +494,52 @@ class TestV13Features:
         assert all({"width", "height", "reason", "elapsed_s"} <= set(r)
                    for r in history)
         assert all(r["reason"] == "never fits" for r in history)
+
+
+class TestInputValidation:
+    def test_valid_c_program_passes(self):
+        code = '#include <stdio.h>\nint main(void){puts("ok"); return 0;}\n'
+        validate_c_source(code)                       # no exception
+
+    def test_empty_source_rejected(self):
+        with pytest.raises(SourceInputError) as caught:
+            validate_c_source("   \n")
+        assert caught.value.code == "INVALID_SOURCE"
+
+    def test_non_ascii_rejected_with_position(self):
+        # The Chinese in a Python comment is the exact garbled-comment failure.
+        code = '# 以下为测试部分\nint main(void){return 0;}\n'
+        with pytest.raises(SourceInputError) as caught:
+            validate_c_source(code)
+        err = caught.value
+        assert err.code == "UNSUPPORTED_SOURCE"
+        assert err.line == 1 and err.column is not None
+
+    def test_python_syntax_rejected(self):
+        py = 'def f(n):\n    return n + 1\n'
+        with pytest.raises(SourceInputError) as caught:
+            validate_c_source(py)
+        assert caught.value.code == "UNSUPPORTED_SOURCE"
+
+    def test_python_colon_block_rejected(self):
+        py = 'while True:\n    break\n'
+        with pytest.raises(SourceInputError) as caught:
+            validate_c_source(py)
+        assert caught.value.code == "UNSUPPORTED_SOURCE"
+
+    def test_missing_main_rejected(self):
+        code = '#include <stdio.h>\nint helper(void){return 1;}\n'
+        with pytest.raises(SourceInputError) as caught:
+            validate_c_source(code)
+        assert caught.value.code == "INVALID_SOURCE"
+
+    def test_shape_code_rejects_python_instead_of_bad_file(self, tmp_path):
+        with pytest.raises(SourceInputError):
+            shape_code('def f(x):\n    return x\n',
+                       str(tmp_path / "img.png"), str(tmp_path / "out.c"),
+                       mode="v2")
+        # No output file is written when the input is rejected.
+        assert not Path(tmp_path / "out.c").exists()
 
 
 if __name__ == "__main__":

@@ -21,7 +21,10 @@ from shared.types import CodeSkeleton, PixelGrid, Statement
 
 from ascii_art_executable.grid import build_grid
 from ascii_art_executable.backends.c_backend import CBackend
-from ascii_art_executable.backends.c_parser import extract_main_parts
+from ascii_art_executable.backends.c_parser import (
+    extract_main_parts,
+    validate_c_source,
+)
 from ascii_art_executable.backends.c_tokenfill import (
     LAYOUT_GROWTH,
     LAYOUT_MAX_ATTEMPTS,
@@ -61,6 +64,7 @@ def shape_code(code_text: str, image_path: str, out_path: str, *,
     ``sk.attempt_history``, and if every attempt fails they are attached to the
     final error's ``details["attempt_history"]``.
     """
+    validate_c_source(code_text, filename=out_path)
     pre, body = extract_main_parts(code_text)
     sk = CodeSkeleton(source_path=out_path, lang="c")
     line = 1

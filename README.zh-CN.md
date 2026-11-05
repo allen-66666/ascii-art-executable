@@ -17,12 +17,14 @@
 ```
 ascii-art-executable_C/
 ├─ run.py                  ← 【C】双击交互式启动器
+├─ run_selfcheck.bat       ← 【C】双击一键检验
 ├─ README.md               ← English README
 ├─ README.zh-CN.md         ← 本文件（中文说明）
 ├─ FILE_GUIDE.md           ← 逐个文件解释作用
 ├─ C_对接说明.md           ← 给 D/E 的对接契约
 ├─ requirements.txt        ← 依赖：Pillow、pytest
 ├─ shared/                 ← 五共享类型（B/F/C 共同）
+├─ codeart/                ← 【B】build_mask/ShapeSpec/SizeRequest -> 布尔 Mask
 ├─ ascii_art_executable/
 │   ├─ grid.py             ← 【B】build_grid -> PixelGrid
 │   ├─ shapecheck.py       ← 【F】check_shape / detect / render_report
@@ -31,17 +33,20 @@ ascii-art-executable_C/
 │       ├─ c_widthsafe.py  ← 【C】等宽清洗 + 安全字符集
 │       ├─ c_seam.py       ← 【C】保列接缝（语句嵌入图案）
 │       ├─ c_doc.py        ← 【C】解释代码作用的英文注释
-│       ├─ c_parser.py     ← 【C】把真实 C 源码解析成骨架
+│       ├─ c_parser.py     ← 【C】解析真实 C 源码 + 输入校验
 │       ├─ c_fill.py       ← 【C】块注释填充 + 源码组装（v0/v1a/v1b）
 │       ├─ c_backend.py    ← 【C】CBackend：fill / verify / 编译器探测
 │       ├─ c_tokenfill.py  ← 【C】v2 + v1.3：距离场明暗、特征与轮廓工具
-│       └─ shaper.py       ← 【C】高层入口：代码 + 图片 -> 保形代码
+│       ├─ mask_adapter.py ← 【C】把 B 的 build_mask 适配成 grid_builder 注入
+│       └─ shaper.py       ← 【C】高层入口：代码 + 图片/形状 -> 保形代码
 ├─ scripts/
-│   ├─ build_shaped.py     ← 【C】任意图片 + 代码 -> 保形代码（命令行）
+│   ├─ build_shaped.py     ← 【C】图片或形状名 + 代码 -> 保形代码（命令行）
+│   ├─ selfcheck.py        ← 【C】零输入一键检验
 │   ├─ demo_c.py           ← 【C】猫演示
 │   ├─ demo_grid.py        ← 【B】演示
 │   └─ demo_bf.py          ← 【F】演示
-└─ tests/                  ← 共 59 个测试（B + F + C）
+├─ docs/modules/           ← 【B】形状模块文档（中英）
+└─ tests/                  ← 共 100 个测试（B + F + C）
 ```
 
 ---
@@ -54,6 +59,14 @@ python -m pip install -r requirements.txt
 ```
 
 > B 原工程自带 `.venv` 是 macOS 格式，Windows 不可用，直接用系统 Python 即可。
+
+---
+
+## 一键检验（零输入、不用找文件）
+
+双击 **`run_selfcheck.bat`**（或运行 `python scripts/selfcheck.py`）。它只用工程自带的 `demo/`
+素材和内置形状名，自动生成 6 个案例，逐个编译运行并与原程序比对输出，打印 PASS/FAIL 汇总表，
+并给出一张猫形示例和生成程序的输出；有任何失败时退出码非零。全程不需要你提供代码或图片路径。
 
 ---
 
@@ -85,6 +98,21 @@ python scripts/build_shaped.py demo/heart.png demo/verify_input.c demo/heart_v2.
 
 不指定宽度时，`build_shaped.py` 用 `recommend_width_for`（同时打印内部特征报告）；显式宽度导致
 特征过小时会打 WARNING。
+
+### 内置形状名（B 的 `build_mask`，经 `grid_builder` 注入）
+
+第一个参数可以不写图片，直接写 B 的内置形状名 `circle` / `cat` / `CODE`（大小写不敏感）；
+此时第 5 个参数表示掩码**高度行数**（默认 32）：
+
+```powershell
+# 参数：<形状名> [代码.c] [输出.c] [模式] [高度行数]
+python scripts/build_shaped.py cat demo/table_input.c cat_mask.c v2 32
+python scripts/build_shaped.py CODE demo/donut_input.c code_mask.c v1a
+```
+
+`SizeRequest(32)` 对应 circle 64×32、cat 64×32、CODE 178×32。`mask_adapter` 在不改冻结类型的前提下
+把 B 的布尔 `Mask` 转成 `PixelGrid`；重试时把掩码按比例放大（如猫 64×32 → 80×40），让有界重试真正
+拿到更大画布，图片路径行为保持不变。`run.py` 和单文件 exe 同样支持这些形状名。
 
 ### 直接编译运行生成的 .c
 
@@ -176,8 +204,11 @@ Dev-C++ 5.11 自带 MinGW64 gcc 4.9.2，位于 `C:\Program Files (x86)\Dev-Cpp\M
 
 ## 八、本机验证结果（2026-11-04）
 
-- `python -m pytest tests -q` → **59 passed, 5 subtests passed**。
+- `python -m pytest tests -q` → **100 passed, 5 subtests passed**（C 的 69 + B 的网格/形状测试 + 14 个 mask 接入）。
+- 内置掩码路径（cat，32 行）：64×32 网格、三个特征孔（双眼/鼻子）保留、precision 100%，gcc 编译运行输出与原程序逐字节一致。
 - 猫（自动宽 81）：1468/1482（99.1%）、precision 100%、轮廓闭合、眼孔清晰，gcc 编译运行乘法表正确。
 - 甜甜圈（宽 60）：680/697（97.6%）、precision 100%，gcc 输出 total=91。
 - 心形（宽 60）：656/668（98.2%），gcc 输出 sum=15。
 - 剩余缺失格是被背景包围的孤立单格 run（长度 1，放不下 `/*` 标记），不在外轮廓上，不影响闭合。
+- 已知限制：v2 下 F 形状检查判 FAIL（约缺 11–21 格），原因是词法必需空格（如 `int total`、字符串空格）
+  落在前景格上；v1a 完全通过。这是图片路径下引擎原有的行为，并非 mask 接入引入。

@@ -3,15 +3,17 @@
 用法（在项目根目录）：
     python scripts/build_shaped.py <image> [code.c] [out.c] [mode] [max_w]
 
-- <image>  : 任意图片（猫、狗、字母、Logo……给什么图就成什么形状），必填
+- <image>  : 任意图片（猫、狗、字母、Logo……给什么图就成什么形状），必填；
+             也可以直接写 B 的内置形状名 circle / cat / CODE（走 build_mask 掩码）
 - [code.c] : 描述"想要的功能"的 C 源文件；省略则用内置的 hello 程序
 - [out.c]  : 输出文件；省略则写到 demo/shaped/<图片名>.c
 - [mode]   : auto（默认）| v1a | v1b | v0
-- [max_w]  : 图案宽度，默认 72
+- [max_w]  : 图案宽度，默认 72；形状名模式下这里是掩码高度（行数），默认 32
 
 示例：
     python scripts/build_shaped.py demo/cat.png
     python scripts/build_shaped.py my_logo.png my_program.c out.c v1a 80
+    python scripts/build_shaped.py cat demo/donut_input.c out.c v2 32
 """
 
 from __future__ import annotations
@@ -28,6 +30,9 @@ from ascii_art_executable.backends.c_backend import CBackend  # noqa: E402
 from ascii_art_executable.backends.c_tokenfill import (  # noqa: E402
     recommend_width_for, feature_report,
 )
+from ascii_art_executable.backends.mask_adapter import (  # noqa: E402
+    is_shape_name, shape_code_for_shape,
+)
 from ascii_art_executable.shapecheck import render_report  # noqa: E402
 
 DEFAULT_CODE = """#include <stdio.h>
@@ -43,8 +48,9 @@ def main() -> None:
         print(__doc__)
         raise SystemExit(1)
 
-    image = Path(sys.argv[1]).resolve()
-    if not image.is_file():
+    use_shape = is_shape_name(sys.argv[1]) and not Path(sys.argv[1]).is_file()
+    image = Path(sys.argv[1]) if use_shape else Path(sys.argv[1]).resolve()
+    if not use_shape and not image.is_file():
         print(f"image not found: {image}")
         raise SystemExit(1)
 
@@ -61,14 +67,19 @@ def main() -> None:
 
     mode = sys.argv[4] if len(sys.argv) >= 5 else "auto"
     width_explicit = len(sys.argv) >= 6
-    if width_explicit:
-        max_w = int(sys.argv[5])
+    if use_shape:
+        # B's mask path: the 5th argument is the mask height in rows (default 32).
+        rows = int(sys.argv[5]) if width_explicit else 32
+        sk, grid = shape_code_for_shape(code, str(image), str(out), mode=mode,
+                                        height_rows=rows)
     else:
-        # Auto width must fit the longest token and keep internal features (eyes,
-        # holes, ...) recognizable, instead of a fixed 72-column guess.
-        max_w = recommend_width_for(code, str(image))
-
-    sk, grid = shape_code(code, str(image), str(out), mode=mode, max_w=max_w)
+        if width_explicit:
+            max_w = int(sys.argv[5])
+        else:
+            # Auto width must fit the longest token and keep internal features
+            # (eyes, holes, ...) recognizable, instead of a fixed 72-column guess.
+            max_w = recommend_width_for(code, str(image))
+        sk, grid = shape_code(code, str(image), str(out), mode=mode, max_w=max_w)
     print(f"image={image.name}  mode={sk.used_mode}  grid={grid.width}x{grid.height}  "
           f"fg={grid.fg_count} -> {out.name}  width={'explicit' if width_explicit else 'auto'}\n")
 

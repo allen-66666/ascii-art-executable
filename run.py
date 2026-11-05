@@ -21,6 +21,9 @@ from ascii_art_executable.backends.c_backend import CBackend         # noqa: E40
 from ascii_art_executable.backends.c_tokenfill import (              # noqa: E402
     recommend_width_for,
 )
+from ascii_art_executable.backends.mask_adapter import (
+    is_shape_name, shape_code_for_shape,
+)
 from ascii_art_executable.shapecheck import render_report            # noqa: E402
 
 
@@ -53,8 +56,14 @@ def main() -> None:
     print("=" * 64)
     print("Paste a path with '/' or '\\'; surrounding quotes are optional.\n")
 
-    image = ask_required(
-        "1) Path to the image (png/jpg/...):\n   > ", check_file=True)
+    while True:
+        image = ask_required(
+            "1) Path to the image (png/jpg/...), or a built-in shape "
+            "(circle / cat / CODE):\n   > ")
+        if is_shape_name(image) or Path(image).is_file():
+            break
+        print(f"  File not found: {image}\n  Please check the path and try again.\n")
+    use_shape = is_shape_name(image) and not Path(image).is_file()
     code_path = ask_required(
         "2) Path to the C source file:\n   > ", check_file=True)
     code_text = Path(code_path).read_text(encoding="utf-8")
@@ -66,15 +75,23 @@ def main() -> None:
     mode = ask_required(
         "4) Mode (v2/v1a/v1b/v0; recommended v2):\n   > ")
 
-    width_raw = ask_required(
-        "5) Width in columns (type 'auto' or a number):\n   > ")
+    if use_shape:
+        width_raw = ask_required(
+            "5) Shape height in rows (type 'auto' for 32, or a number):\n   > ")
+    else:
+        width_raw = ask_required(
+            "5) Width in columns (type 'auto' or a number):\n   > ")
 
     Path(out_path).parent.mkdir(parents=True, exist_ok=True)
-    max_w = recommend_width_for(code_text, image) if width_raw.lower() == "auto" \
-        else int(width_raw)
-
     print("\nBuilding ...\n")
-    sk, grid = shape_code(code_text, image, out_path, mode=mode, max_w=max_w)
+    if use_shape:
+        rows = 32 if width_raw.lower() == "auto" else int(width_raw)
+        sk, grid = shape_code_for_shape(code_text, image, out_path, mode=mode,
+                                        height_rows=rows)
+    else:
+        max_w = recommend_width_for(code_text, image) \
+            if width_raw.lower() == "auto" else int(width_raw)
+        sk, grid = shape_code(code_text, image, out_path, mode=mode, max_w=max_w)
 
     backend = CBackend()
     report = backend.verify(out_path, grid, start_line=sk.start_line,

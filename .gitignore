@@ -1,5 +1,17 @@
+# Python bytecode and caches
 __pycache__/
-*.pyc
+*.py[cod]
 .pytest_cache/
+
+# Virtual environments
 .venv/
+venv/
+
+# Packaged / build artifacts
+build/
+dist/
+*.exe
+
+# Packaging / editor noise
+*.egg-info/
 .DS_Store
