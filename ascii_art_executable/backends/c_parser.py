@@ -8,7 +8,10 @@
 
 from __future__ import annotations
 
+import codecs
+import locale
 import re
+from pathlib import Path
 
 from shared.types import CodeSkeleton, Statement
 
@@ -40,6 +43,39 @@ _PY_BLOCK_RE = re.compile(
 _MAIN_RE = re.compile(r"\bmain\s*\(")
 
 
+def read_c_source(path) -> str:
+    """Read a C source file, detecting its text encoding without crashing.
+
+    On-disk files may be UTF-8 (with or without a BOM) or a legacy ANSI code
+    page (for example GBK/cp936 on Chinese Windows).  The bytes are decoded in
+    order: an explicit UTF-8 BOM, strict UTF-8, the system ANSI code page, then
+    Latin-1 (which maps every byte), so a ``str`` is always returned.  The
+    content is still validated separately by :func:`validate_c_source`, which
+    rejects non-ASCII C with an actionable message instead of a raw
+    ``UnicodeDecodeError``.
+    """
+    raw = Path(path).read_bytes()
+
+    # 1) Explicit UTF-8 BOM.
+    if raw.startswith(codecs.BOM_UTF8):
+        return raw[len(codecs.BOM_UTF8):].decode("utf-8")
+
+    # 2) Plain UTF-8, the documented and preferred encoding.
+    try:
+        return raw.decode("utf-8")
+    except UnicodeDecodeError:
+        pass
+
+    # 3) Legacy ANSI code page (cp936/GBK on Chinese Windows, cp1252 elsewhere).
+    candidates = [locale.getpreferredencoding(False), "cp936", "latin-1"]
+    for encoding in dict.fromkeys(c for c in candidates if c):
+        try:
+            return raw.decode(encoding)
+        except (UnicodeDecodeError, LookupError):
+            continue
+    return raw.decode("latin-1", errors="replace")
+
+
 def validate_c_source(code_text: str, *, filename: str | None = None) -> None:
     """Validate that the input is supported, executable C source.
 
@@ -61,9 +97,10 @@ def validate_c_source(code_text: str, *, filename: str | None = None) -> None:
         for col, ch in enumerate(raw, start=1):
             if ord(ch) > 127:
                 raise SourceInputError(
-                    "non-ASCII character found. This tool only accepts C source "
-                    "(printable ASCII) and cannot translate Python or other "
-                    "languages; please provide a .c program.",
+                    "non-ASCII character found. This tool only supports "
+                    "printable-ASCII C source; save the file as ASCII/UTF-8 and "
+                    "replace non-ASCII text (such as Chinese comments or string "
+                    "literals) with ASCII characters, then retry.",
                     code="UNSUPPORTED_SOURCE", line=line_no, column=col,
                     details={"filename": filename or "", "character": ch})
         # 2) Unambiguous Python syntax.

@@ -33,7 +33,7 @@ from ascii_art_executable.backends.c_tokenfill import (  # noqa: E402
 )
 from ascii_art_executable.backends.shaper import shape_code  # noqa: E402
 from ascii_art_executable.backends.c_parser import (  # noqa: E402
-    validate_c_source, SourceInputError,
+    validate_c_source, SourceInputError, read_c_source,
 )
 from ascii_art_executable.grid import build_grid  # noqa: E402
 from ascii_art_executable.shapecheck import check_shape  # noqa: E402
@@ -540,6 +540,32 @@ class TestInputValidation:
                        mode="v2")
         # No output file is written when the input is rejected.
         assert not Path(tmp_path / "out.c").exists()
+
+    def test_read_gbk_file_does_not_crash_and_then_validates(self, tmp_path):
+        # A legacy ANSI/GBK file (the exact UnicodeDecodeError report) must be
+        # decoded to text rather than crashing the frozen entry point.
+        source = '// 中文注释\nint main(void){return 0;}\n'
+        gbk_path = tmp_path / "legacy.c"
+        gbk_path.write_bytes(source.encode("gbk"))
+
+        decoded = read_c_source(gbk_path)
+        assert "int main" in decoded
+        with pytest.raises(SourceInputError) as caught:
+            validate_c_source(decoded)
+        assert caught.value.code == "UNSUPPORTED_SOURCE"
+
+    def test_read_utf8_bom_strips_bom(self, tmp_path):
+        bom_path = tmp_path / "bom.c"
+        bom_path.write_bytes(b'\xef\xbb\xbfint main(void){return 0;}\n')
+        decoded = read_c_source(bom_path)
+        assert decoded.startswith("int main")
+        validate_c_source(decoded)
+
+    def test_read_plain_utf8(self, tmp_path):
+        plain_path = tmp_path / "plain.c"
+        plain_path.write_bytes(b'int main(void){return 0;}\n')
+        decoded = read_c_source(plain_path)
+        assert decoded == "int main(void){return 0;}\n"
 
 
 if __name__ == "__main__":
