@@ -13,13 +13,6 @@ is recorded; a final failure raises :class:`StageError` carrying the
 ``attempt_history`` in the diagnostic details, as required by the v1.4
 contract.
 
-Before the loop, a scale-1 base mask is built and the first scale is
-estimated as ``max(1, initial_scale, L/U, sqrt(T/(eta*A)))`` where ``L`` is
-the longest token, ``T`` the total token width, ``U`` the longest fillable
-span and ``A`` the fillable cells of the base mask (``eta = 0.75``).  This
-moves the start up so the longest token avoids pointless small-scale retries;
-it never starts below scale 1.
-
 Cancellation and time budgets are enforced during both mask generation and
 packing, not just between attempts.  A stage-aware context is passed to the
 mask builder, so work stops promptly when the budget is reached.  All retries
@@ -48,11 +41,6 @@ from .contracts import (
 
 #: A single lexical separator occupies one cell.
 _GAP_CELLS = 1
-
-#: Target fill fraction (``eta``) for the area-based starting estimate: the
-#: tokens are expected to occupy at most this share of the fillable cells, so
-#: the estimate leaves headroom for holes and comment filler.
-_AREA_FILL_TARGET = 0.75
 
 
 class _LayoutContext:
@@ -194,45 +182,6 @@ def _with_history(exc: StageError, history) -> StageError:
     ))
 
 
-def _estimate_start_scale(
-    model: SourceModel,
-    shape_spec: ShapeSpec,
-    options: LayoutOptions,
-    mask_builder: MaskBuilder,
-    layout_ctx,
-) -> float:
-    """Estimate the scale for the first packing attempt.
-
-    A scale-1 base mask is built first so the estimate is measured from the
-    real shape rather than guessed.  With the longest token ``L``, total token
-    width ``T``, longest fillable span ``U`` and fillable cells ``A``:
-
-    * ``s_width = L / U`` guarantees a span can hold the longest token;
-    * ``s_area = sqrt(T / (eta * A))`` guarantees enough total area (area
-      scales with the square of the scale), targeting an ``eta`` (0.75) fill.
-
-    Returns ``max(1, initial_scale, s_width, s_area)``.  The value is never
-    below 1, so the estimate only moves the start up, never below the base.
-    """
-    base_mask = mask_builder(
-        shape_spec, SizeRequest(options.base_height_rows),
-        options.font_metrics, ctx=layout_ctx)
-
-    longest_span = 0
-    fillable_cells = 0
-    for row_spans in base_mask.spans:
-        for start, end in row_spans:
-            longest_span = max(longest_span, end - start)
-            fillable_cells += end - start
-
-    longest_token = max(token.width for token in model.tokens)
-    total_width = sum(token.width for token in model.tokens)
-
-    scale_width = longest_token / longest_span
-    scale_area = math.sqrt(total_width / (_AREA_FILL_TARGET * fillable_cells))
-    return max(1.0, options.initial_scale, scale_width, scale_area)
-
-
 def fit_layout(
     model: SourceModel,
     shape_spec: ShapeSpec,
@@ -273,23 +222,13 @@ def fit_layout(
     # A stage-aware context enforces the budget while the mask is built.
     layout_ctx = _LayoutContext(ctx, stage_deadline)
 
-    # Build a scale-1 base mask and estimate the first scale from the longest
-    # token and total area, so the longest token avoids pointless small-scale
-    # retries.  The estimate is >= 1 and only moves the start up.  A failure
-    # during the base mask build (timeout/cancel) still gets the history key.
-    try:
-        start_scale = _estimate_start_scale(
-            model, shape_spec, options, mask_builder, layout_ctx)
-    except StageError as exc:
-        raise _with_history(exc, history) from exc
-
     for attempt in range(options.max_attempts):
         attempt_started = ctx.clock()
         mask = None
         attempt_recorded = False
         try:
             ctx.check()
-            requested_scale = start_scale * (options.growth_factor ** attempt)
+            requested_scale = options.initial_scale * (options.growth_factor ** attempt)
             height = max(1, math.ceil(options.base_height_rows * requested_scale))
 
             mask = mask_builder(

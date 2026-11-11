@@ -44,31 +44,14 @@ plan = fit_layout(
    span without committing anything; when no span can hold it, the attempt
    fails and reports that token's index.
 
-## Initial size estimate
-
-Before the retry loop, the engine builds a scale-1 base mask and measures it
-so the first attempt starts at a realistically large size instead of wasting
-retries on small masks. From the base mask it takes the longest fillable
-span `U` and the total fillable cells `A`; from the tokens it takes the
-longest token `L` and the total token width `T`. The starting scale is
-
-```
-s_start = max(1, initial_scale, L / U, sqrt(T / (eta * A)))
-```
-
-with `eta = 0.75` (the expected fill fraction). `L/U` guarantees a span can
-hold the longest token; `sqrt(T/(eta*A))` guarantees enough total area (area
-scales with the square of the scale). The value is never below 1, so the
-estimate only moves the start up, never below the base.
-
 ## Automatic growth
 
 When an attempt fails, the engine asks the builder for a larger mask. The
 requested height is
-`ceil(base_height_rows * s_start * growth_factor ** attempt)`, with
-`growth_factor = 1.25` and at most `max_attempts = 12` attempts. A grown
-mask whose width exceeds `max_columns` (800) or height exceeds `max_rows`
-(600) is rejected with `LAYOUT_LIMIT`.
+`ceil(base_height_rows * initial_scale * growth_factor ** attempt)`, with
+`growth_factor = 1.25` and at most `max_attempts = 12` attempts. A grown mask
+whose width exceeds `max_columns` (800) or height exceeds `max_rows` (600) is
+rejected with `LAYOUT_LIMIT`.
 
 `actual_scale` is the realized ratio `mask.height / base_height_rows`, computed
 after height rounding, so a base of 32 rounded to 33 rows reports
@@ -111,8 +94,7 @@ returned in `plan.attempt_history`; on failure they are attached to
 - contiguous-run reset after a separator;
 - the realized scale after rounded height;
 - the fragmented 178x32 CODE mask flowing tokens across many short spans;
-- a token wider than every base span getting a large enough start via the
-  initial estimate, succeeding on the first attempt without small retries;
+- a token wider than every base span succeeding only after growth;
 - a token that can never fit raising `LAYOUT_LIMIT` with the full history.
 
 ## Known limits
